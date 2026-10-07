@@ -1017,3 +1017,210 @@ loadStandings();
 
 setInterval(loadData, 60000);
 setInterval(loadStandings, 600000);
+(() => {
+  const originalBuild = buildSlideQueue;
+  const originalShow = showSlide;
+
+  buildSlideQueue = function () {
+    originalBuild();
+
+    slideQueue = slideQueue.filter(slide => {
+      if (slide.type === "standings") {
+        return !!slide.rows?.length;
+      }
+
+      slide.games = (slide.games || []).filter(game =>
+        game.status === "live" ||
+        (
+          game.status === "scheduled" &&
+          Date.parse(game.date) >= Date.now()
+        )
+      );
+
+      return slide.games.length > 0;
+    });
+
+    const ordered = [];
+
+    for (const [league] of LEAGUES) {
+      ordered.push(
+        ...slideQueue.filter(slide =>
+          slide.league === league && !slide.team
+        )
+      );
+    }
+
+    ordered.push(
+      ...slideQueue.filter(slide => slide.team)
+    );
+
+    slideQueue = ordered;
+  };
+
+  function teamLogo(team) {
+    const src = image(team.logo);
+
+    return src
+      ? `
+        <img
+          class="match-logo"
+          src="${src}"
+          alt="${escapeHTML(team.name)}"
+          title="${escapeHTML(team.name)}"
+        >
+      `
+      : `
+        <span
+          class="logo-fallback"
+          title="${escapeHTML(team.name)}"
+        >
+          ${escapeHTML(team.short || team.name)}
+        </span>
+      `;
+  }
+
+  gameMarkup = function (game) {
+    const live = game.status === "live";
+
+    const date = stamp(game.date, {
+      weekday: "short",
+      month: "short",
+      day: "numeric"
+    });
+
+    const time = stamp(game.date, {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short"
+    });
+
+    const label = live
+      ? "LIVE · " + (game.detail || "In progress")
+      : date + " · " + time;
+
+    return `
+      <article class="mini-match ${
+        live ? "match-live" : "match-scheduled"
+      }">
+        <div class="mini-label">
+          ${escapeHTML(label)}
+        </div>
+
+        <div class="mini-versus">
+          <div class="mini-team">
+            ${teamLogo(game.away)}
+
+            ${live
+              ? `
+                <span class="live-team-name">
+                  ${escapeHTML(game.away.name)}
+                </span>
+
+                <strong>
+                  ${escapeHTML(game.away.score ?? "—")}
+                </strong>
+              `
+              : ""
+            }
+          </div>
+
+          <span class="match-divider">
+            ${live ? "–" : "vs"}
+          </span>
+
+          <div class="mini-team">
+            ${teamLogo(game.home)}
+
+            ${live
+              ? `
+                <span class="live-team-name">
+                  ${escapeHTML(game.home.name)}
+                </span>
+
+                <strong>
+                  ${escapeHTML(game.home.score ?? "—")}
+                </strong>
+              `
+              : ""
+            }
+          </div>
+        </div>
+
+        ${game.round || game.broadcast
+          ? `
+            <div class="mini-note">
+              ${escapeHTML(
+                [game.round, game.broadcast]
+                  .filter(Boolean)
+                  .join(" · ")
+              )}
+            </div>
+          `
+          : ""
+        }
+      </article>
+    `;
+  };
+
+  showSlide = function (index) {
+    if (!slideQueue.length && data) {
+      clearTimeout(slideTimer);
+
+      slideRoot.innerHTML = `
+        <div class="empty-slide">
+          <div>
+            <h1>No upcoming games right now.</h1>
+            <p>
+              Selected leagues with no games or standings
+              are skipped. The frame refreshes automatically.
+            </p>
+          </div>
+        </div>
+      `;
+
+      scheduleNextSlide();
+      return;
+    }
+
+    originalShow(index);
+
+    const current = slideQueue[slideIndex];
+
+    const section = slideRoot.querySelector(
+      ".league-slide"
+    );
+
+    if (section) {
+      section.classList.toggle(
+        "standings-screen",
+        current?.type === "standings"
+      );
+    }
+
+    if (current?.type === "standings") {
+      const heading = slideRoot.querySelector(
+        ".panel-heading span"
+      );
+
+      if (heading) {
+        heading.textContent =
+          "SEASON STANDINGS · " + current.group;
+      }
+    }
+  };
+
+  el("homeBuildNumber").textContent = "Build 2.04";
+  buildNumber.textContent = "2.04";
+
+  const originalPopulate = populateSettingsUI;
+
+  populateSettingsUI = function () {
+    originalPopulate();
+    buildNumber.textContent = "2.04";
+  };
+
+  if (data) {
+    buildSlideQueue();
+    showSlide(0);
+  }
+})();
