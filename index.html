@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  >
+  <title>Women’s Sports Frame</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <main id="display">
+    <div id="backgroundImage" class="background-image"></div>
+    <div class="background-overlay"></div>
+    <div id="slideRoot"></div>
+
+    <div id="playStateIcon" class="play-state-icon hidden">⏸</div>
+
+    <button
+      id="settingsHotspot"
+      aria-label="Open settings"
+    ></button>
+
+    <div id="homeBuildNumber" class="home-build-number">Build —</div>
+  </main>
+
+  <div id="settingsPanel" class="settings-panel hidden">
+    <div class="settings-box">
+      <div class="settings-header">
+        <h2>Frame Settings</h2>
+        <button id="closeSettings" class="close-button">×</button>
+      </div>
+
+      <section class="settings-section">
+        <h3>Leagues</h3>
+        <p class="settings-help">
+          Each selected league gets a scoreboard in the rotation.
+        </p>
+        <div id="leagueChoices"></div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Teams</h3>
+        <p class="settings-help">
+          Add a dedicated slide for each favorite team.
+        </p>
+
+        <select id="teamLeague"></select>
+
+        <input
+          id="teamSearch"
+          type="search"
+          placeholder="Search teams"
+          aria-label="Search teams"
+        >
+
+        <div id="teamChoices"></div>
+        <p id="teamStatus" class="settings-help"></p>
+      </section>
+
+      <section class="settings-section">
+        <h3>Background Color</h3>
+
+        <div class="color-setting">
+          <input id="backgroundColor" type="color" value="#0b1117">
+          <span id="backgroundColorValue">#0B1117</span>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <div class="slider-title">
+          <h3>Brightness</h3>
+          <span id="brightnessValue">100%</span>
+        </div>
+
+        <input
+          id="brightnessSlider"
+          type="range"
+          min="20"
+          max="100"
+          step="5"
+          value="100"
+        >
+      </section>
+
+      <section class="settings-section">
+        <h3>Slide Time</h3>
+
+        <select id="slideDuration">
+          <option value="10000">10 seconds</option>
+          <option value="15000">15 seconds</option>
+          <option value="20000">20 seconds</option>
+          <option value="30000">30 seconds</option>
+          <option value="60000">1 minute</option>
+        </select>
+      </section>
+
+      <section class="settings-section">
+        <h3>Data Connections</h3>
+        <div id="coverageStatus"></div>
+      </section>
+
+      <section class="settings-section build-section">
+        <span>Build</span>
+        <span id="buildNumber">—</span>
+      </section>
+
+      <section class="settings-actions">
+        <button id="resetSettings" class="secondary-button">
+          Reset Settings
+        </button>
+
+        <button id="saveSettings" class="primary-button">
+          Save
+        </button>
+      </section>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
