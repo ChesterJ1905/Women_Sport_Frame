@@ -1,4 +1,4 @@
-const BUILD_NUMBER = "2.01";
+const BUILD_NUMBER = "2.03";
 
 const LEAGUES = [
   ["wnba", "WNBA"],
@@ -52,6 +52,8 @@ let catalog = {};
 let catalogRequests = new Set();
 let fetching = false;
 let offline = false;
+let standingsData = {};
+let standingsFetching = false;
 
 function escapeHTML(value = "") {
   return String(value)
@@ -60,10 +62,6 @@ function escapeHTML(value = "") {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
-}
-
-function escapeAttribute(value = "") {
-  return escapeHTML(value);
 }
 
 function loadSettings() {
@@ -105,11 +103,15 @@ function stamp(date, options) {
 function image(url) {
   try {
     return new URL(url).protocol === "https:"
-      ? escapeAttribute(url)
+      ? escapeHTML(url)
       : "";
   } catch {
     return "";
   }
+}
+
+function leagueName(id) {
+  return LEAGUES.find(([key]) => key === id)?.[1] || id;
 }
 
 function gameOrder(a, b) {
@@ -122,11 +124,7 @@ function gameOrder(a, b) {
 
   return (
     priority(a) - priority(b) ||
-    (
-      a.status === "final" && b.status === "final"
-        ? Date.parse(b.date) - Date.parse(a.date)
-        : Date.parse(a.date) - Date.parse(b.date)
-    )
+    Date.parse(a.date) - Date.parse(b.date)
   );
 }
 
@@ -166,37 +164,48 @@ function allTeams() {
   return [...map.values()];
 }
 
+function addGameSlides(id, league, name, games, team) {
+  if (!games.length) {
+    slideQueue.push({
+      id,
+      league,
+      name,
+      team,
+      games: []
+    });
+    return;
+  }
+
+  for (let i = 0; i < games.length; i += 3) {
+    slideQueue.push({
+      id: id + ":" + i,
+      league,
+      name,
+      team,
+      games: games.slice(i, i + 3),
+      page: i / 3 + 1,
+      pages: Math.ceil(games.length / 3)
+    });
+  }
+}
+
 function buildSlideQueue() {
   slideQueue = [];
 
   if (!data) return;
 
+  const games = data.games.filter(game =>
+    !["final", "cancelled"].includes(game.status)
+  );
+
   for (const [id, name] of LEAGUES) {
     if (!settings.leagues[id]) continue;
 
-    const games = data.games
+    const leagueGames = games
       .filter(game => game.league === id)
       .sort(gameOrder);
 
-    if (games.length) {
-      for (let i = 0; i < games.length; i += 3) {
-        slideQueue.push({
-          id: id + ":" + i,
-          league: id,
-          name,
-          games: games.slice(i, i + 3),
-          page: i / 3 + 1,
-          pages: Math.ceil(games.length / 3)
-        });
-      }
-    } else {
-      slideQueue.push({
-        id,
-        league: id,
-        name,
-        games: []
-      });
-    }
+    addGameSlides(id, id, name, leagueGames);
   }
 
   for (const key of settings.teams) {
@@ -204,7 +213,7 @@ function buildSlideQueue() {
 
     if (!team) continue;
 
-    const games = data.games
+    const teamGames = games
       .filter(game =>
         game.league === team.league &&
         (
@@ -214,50 +223,64 @@ function buildSlideQueue() {
       )
       .sort(gameOrder);
 
-    if (games.length) {
-      for (let i = 0; i < games.length; i += 3) {
+    addGameSlides(
+      key,
+      team.league,
+      team.name,
+      teamGames,
+      team
+    );
+  }
+
+  for (const [league, table] of Object.entries(standingsData)) {
+    if (
+      !settings.leagues[league] ||
+      !table.rows?.length
+    ) continue;
+
+    const groups = [
+      ...new Set(
+        table.rows.map(row => row.group || "Standings")
+      )
+    ];
+
+    for (const group of groups) {
+      const rows = table.rows.filter(row =>
+        (row.group || "Standings") === group
+      );
+
+      for (let i = 0; i < rows.length; i += 7) {
         slideQueue.push({
-          id: key + ":" + i,
-          league: team.league,
-          name: team.name,
-          team,
-          games: games.slice(i, i + 3),
-          page: i / 3 + 1,
-          pages: Math.ceil(games.length / 3)
+          id: league + ":standings:" + group + ":" + i,
+          league,
+          name: leagueName(league),
+          type: "standings",
+          rows: rows.slice(i, i + 7),
+          offset: i,
+          group,
+          updatedAt: table.updatedAt,
+          page: i / 7 + 1,
+          pages: Math.ceil(rows.length / 7)
         });
       }
-    } else {
-      slideQueue.push({
-        id: key,
-        league: team.league,
-        name: team.name,
-        team,
-        games: []
-      });
     }
   }
 }
 
 function gameMarkup(game) {
-  const showScore =
-    game.status === "live" ||
-    game.status === "final";
-
   const status =
     game.status === "live"
       ? "LIVE · " + (game.detail || "In progress")
-      : game.status === "final"
-        ? "FINAL"
-        : game.status === "scheduled"
-          ? stamp(game.date, {
-              hour: "numeric",
-              minute: "2-digit",
-              timeZoneName: "short"
-            })
-          : game.status.toUpperCase();
+      : game.status === "scheduled"
+        ? stamp(game.date, {
+            hour: "numeric",
+            minute: "2-digit",
+            timeZoneName: "short"
+          })
+        : game.status.toUpperCase();
 
   return `
-    <article class="sports-game ${escapeAttribute(game.status)}">
+    <article class="sports-game ${escapeHTML(game.status)}">
       <div class="game-label">
         <span>
           ${escapeHTML(stamp(game.date, {
@@ -266,7 +289,10 @@ function gameMarkup(game) {
             day: "numeric"
           }))}
         </span>
-        <span>${escapeHTML(status)}</span>
+
+        <span class="game-status">
+          ${escapeHTML(status)}
+        </span>
       </div>
 
       ${[game.away, game.home].map(team => `
@@ -281,7 +307,10 @@ function gameMarkup(game) {
           </span>
 
           <strong class="sports-score">
-            ${showScore ? escapeHTML(team.score ?? "—") : ""}
+            ${game.status === "live"
+              ? escapeHTML(team.score ?? "—")
+              : ""
+            }
           </strong>
         </div>
       `).join("")}
@@ -302,6 +331,66 @@ function gameMarkup(game) {
   `;
 }
 
+function tableMarkup(slide) {
+  const soccer = ["nwsl", "wsl", "uwcl"].includes(
+    slide.league
+  );
+
+  return `
+    <table class="league-table">
+      <thead>
+        <tr>
+          <th>Pos</th>
+          <th>Team</th>
+          <th>W</th>
+          <th>L</th>
+          ${soccer
+            ? "<th>D</th><th>PTS</th>"
+            : "<th>PCT</th><th>GB</th>"
+          }
+        </tr>
+      </thead>
+
+      <tbody>
+        ${slide.rows.map((row, index) => {
+          const rank =
+            row.rank && row.rank !== "—"
+              ? row.rank
+              : slide.offset + index + 1;
+
+          return `
+            <tr>
+              <td>${escapeHTML(rank)}</td>
+
+              <td>
+                ${image(row.logo)
+                  ? `<img src="${image(row.logo)}" alt="">`
+                  : ""
+                }
+                ${escapeHTML(row.name)}
+              </td>
+
+              <td>${escapeHTML(row.wins)}</td>
+              <td>${escapeHTML(row.losses)}</td>
+
+              ${soccer
+                ? `
+                  <td>${escapeHTML(row.ties)}</td>
+                  <td>${escapeHTML(row.points)}</td>
+                `
+                : `
+                  <td>${escapeHTML(row.pct)}</td>
+                  <td>${escapeHTML(row.gb)}</td>
+                `
+              }
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
 function showSlide(index) {
   clearTimeout(slideTimer);
 
@@ -310,10 +399,7 @@ function showSlide(index) {
       <div class="empty-slide">
         <div>
           <h1>Women’s Sports</h1>
-          <p>
-            Choose leagues or favorite teams in settings
-            to start the frame.
-          </p>
+          <p>Choose leagues or favorite teams in settings.</p>
         </div>
       </div>
     `;
@@ -327,82 +413,85 @@ function showSlide(index) {
   const slide = slideQueue[slideIndex];
 
   const coverage =
-    data.coverage.find(item => item.league === slide.league)
-      ?.status || "unavailable";
-
-  const leagueName =
-    LEAGUES.find(([id]) => id === slide.league)?.[1] ||
-    slide.league;
-
-  const logo = image(slide.team?.logo);
+    data.coverage?.find(
+      item => item.league === slide.league
+    )?.status || "unavailable";
 
   const college =
-    data.leagues?.find(league => league.id === slide.league)
-      ?.college;
+    data.leagues?.find(
+      league => league.id === slide.league
+    )?.college;
 
-  const monogram =
-    slide.team?.short ||
-    ({
-      wnba: "WNBA",
-      nwsl: "NWSL",
-      pwhl: "PWHL",
-      wsl: "WSL",
-      uwcl: "UWCL",
-      national: "INTL",
-      march: "NCAA",
-      unrivaled: "UR"
-    }[slide.league] || "NCAA");
+  const isTable = slide.type === "standings";
+
+  const tournament =
+    college ||
+    slide.league === "uwcl" ||
+    (slide.games || []).some(game =>
+      /playoff|semifinal|quarterfinal|finals|round of/i.test(
+        game.round || ""
+      )
+    );
+
+  const label = isTable
+    ? "CURRENT STANDINGS"
+    : tournament
+      ? "TOURNAMENT MATCHUPS"
+      : "LIVE & UPCOMING";
 
   const emptyMessage =
     coverage === "not-connected"
-      ? "This league’s scores aren’t connected yet."
+      ? "This league’s feed is not connected yet."
       : coverage === "unavailable"
         ? "Scores are temporarily unavailable."
-        : college
-          ? "No NCAA championship games scheduled."
-          : "No games listed this week.";
+        : "No live or upcoming games listed.";
+
+  const body = isTable
+    ? tableMarkup(slide)
+    : slide.games.length
+      ? `
+        <div class="schedule-grid">
+          ${slide.games.map(gameMarkup).join("")}
+        </div>
+      `
+      : `
+        <div class="quiet-board">
+          ${escapeHTML(emptyMessage)}
+          <small>
+            ${college ? "NCAA postseason only. " : ""}
+            Finished games are hidden.
+          </small>
+        </div>
+      `;
 
   slideRoot.innerHTML = `
-    <section class="sports-slide ${
-      slide.games.length > 2 ? "compact" : ""
-    }">
-      <div class="sports-identity">
-        <p class="eyebrow">
-          ${slide.team ? "YOUR TEAM" : "YOUR LEAGUE"}
-        </p>
+    <section class="league-slide">
+      <header class="league-header">
+        <div>
+          <p class="eyebrow">
+            ${slide.team
+              ? escapeHTML(leagueName(slide.league))
+              : "WOMEN’S SPORTS"
+            }
+          </p>
 
-        ${logo
-          ? `<img class="identity-logo" src="${logo}" alt="">`
-          : `
-            <div class="identity-monogram">
-              ${escapeHTML(monogram)}
-            </div>
-          `
-        }
+          <h1>${escapeHTML(slide.name)}</h1>
+        </div>
 
-        <h1 class="sports-title">
-          ${escapeHTML(slide.name)}
-        </h1>
+        <span class="league-date">
+          ${escapeHTML(stamp(new Date(), {
+            weekday: "long",
+            month: "short",
+            day: "numeric"
+          }))}
+        </span>
+      </header>
 
-        <p class="sports-subtitle">
-          ${escapeHTML(
-            slide.team
-              ? leagueName
-              : college
-                ? "NCAA championships only"
-                : "Scores & upcoming games"
-          )}
-        </p>
-      </div>
-
-      <div class="scoreboard">
-        <div class="board-heading">
+      <div class="league-panel">
+        <div class="panel-heading">
           <span>
-            ${escapeHTML(stamp(new Date(), {
-              weekday: "long",
-              month: "short",
-              day: "numeric"
-            }))}
+            ${label}
+            ${isTable ? " · " + escapeHTML(slide.group) : ""}
           </span>
 
           <span>
@@ -413,30 +502,30 @@ function showSlide(index) {
           </span>
         </div>
 
-        ${slide.games.length
-          ? slide.games.map(gameMarkup).join("")
-          : `
-            <div class="quiet-board">
-              ${escapeHTML(emptyMessage)}
-              <small>
-                ${coverage === "connected"
-                  ? "Schedules refresh automatically."
-                  : "Other selected leagues and teams will continue to rotate."
-                }
-              </small>
-            </div>
-          `
-        }
+        ${body}
 
         <div class="feed-note">
-          ${offline ? "Offline · Saved scores from " : "Updated "}
-          ${escapeHTML(stamp(data.updatedAt, {
-            month: "short",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit"
-          }))}
-          ${coverage === "partial" ? " · Partial coverage" : ""}
+          ${offline ? "Offline · Saved data from " : "Updated "}
+
+          ${escapeHTML(stamp(
+            slide.updatedAt || data.updatedAt,
+            {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit"
+            }
+          ))}
+
+          ${coverage === "partial" && !isTable
+            ? " · Partial coverage"
+            : ""
+          }
+
+          ${tournament && !isTable
+            ? " · Published rounds; full bracket unavailable"
+            : ""
+          }
         </div>
       </div>
     </section>
@@ -530,13 +619,50 @@ async function loadData() {
   }
 }
 
+async function loadStandings() {
+  if (standingsFetching) return;
+
+  standingsFetching = true;
+
+  await Promise.all(
+    ["wnba", "nwsl", "wsl", "uwcl"].map(async league => {
+      try {
+        const response = await fetch(
+          "/api/standings?league=" +
+          encodeURIComponent(league)
+        );
+
+        if (!response.ok) return;
+
+        const table = await response.json();
+
+        if (Array.isArray(table.rows)) {
+          standingsData[league] = table;
+        }
+      } catch {}
+    })
+  );
+
+  standingsFetching = false;
+
+  if (data) {
+    const current = slideQueue[slideIndex]?.id;
+
+    buildSlideQueue();
+
+    showSlide(
+      Math.max(
+        0,
+        slideQueue.findIndex(slide => slide.id === current)
+      )
+    );
+  }
+}
+
 function renderCoverage() {
   el("coverageStatus").innerHTML =
     (data?.coverage || []).map(item =>
-      escapeHTML(
-        LEAGUES.find(([id]) => id === item.league)?.[1] ||
-        item.league
-      ) +
+      escapeHTML(leagueName(item.league)) +
       " — " +
       escapeHTML(item.status.replaceAll("-", " "))
     ).join("<br>") || "Waiting for feeds…";
@@ -559,7 +685,7 @@ function renderTeamChoices() {
 
       <input
         type="checkbox"
-        data-team="${escapeAttribute(team.key)}"
+        data-team="${escapeHTML(team.key)}"
         ${draftTeams.includes(team.key) ? "checked" : ""}
       >
     </label>
@@ -603,7 +729,10 @@ async function loadTeamCatalog() {
     if (!response.ok) throw new Error();
 
     const result = await response.json();
-    catalog[id] = result.teams;
+
+    catalog[id] = Array.isArray(result.teams)
+      ? result.teams
+      : [];
   } catch {
     if (el("teamLeague").value === id) {
       el("teamStatus").textContent =
@@ -765,7 +894,8 @@ backgroundColorInput.addEventListener("input", () => {
 });
 
 brightnessSlider.addEventListener("input", () => {
-  brightnessValue.textContent = brightnessSlider.value + "%";
+  brightnessValue.textContent =
+    brightnessSlider.value + "%";
 });
 
 el("saveSettings").addEventListener("click", () => {
@@ -773,10 +903,16 @@ el("saveSettings").addEventListener("click", () => {
   closeSettings();
 });
 
-el("closeSettings").addEventListener("click", closeSettings);
+el("closeSettings").addEventListener(
+  "click",
+  closeSettings
+);
 
 el("resetSettings").addEventListener("click", () => {
-  settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+  settings = JSON.parse(
+    JSON.stringify(DEFAULT_SETTINGS)
+  );
+
   draftTeams = [];
 
   saveSettings();
@@ -824,6 +960,7 @@ settingsHotspot.addEventListener("click", event => {
 
 el("display").addEventListener("click", event => {
   if (event.target === settingsHotspot) return;
+
   togglePause();
 });
 
@@ -831,16 +968,20 @@ document.addEventListener("contextmenu", event => {
   event.preventDefault();
 });
 
-el("leagueChoices").innerHTML = LEAGUES.map(([id, name]) => `
-  <label class="toggle-row">
-    <span>${escapeHTML(name)}</span>
-    <input type="checkbox" data-league="${id}">
-  </label>
-`).join("");
+el("leagueChoices").innerHTML =
+  LEAGUES.map(([id, name]) => `
+    <label class="toggle-row">
+      <span>${escapeHTML(name)}</span>
+      <input type="checkbox" data-league="${id}">
+    </label>
+  `).join("");
 
-el("teamLeague").innerHTML = LEAGUES.map(([id, name]) => `
-  <option value="${id}">${escapeHTML(name)}</option>
-`).join("");
+el("teamLeague").innerHTML =
+  LEAGUES.map(([id, name]) => `
+    <option value="${id}">
+      ${escapeHTML(name)}
+    </option>
+  `).join("");
 
 el("teamLeague").onchange = () => {
   renderTeamChoices();
@@ -849,7 +990,9 @@ el("teamLeague").onchange = () => {
 
 el("teamSearch").oninput = renderTeamChoices;
 
-el("homeBuildNumber").textContent = "Build " + BUILD_NUMBER;
+el("homeBuildNumber").textContent =
+  "Build " + BUILD_NUMBER;
+
 buildNumber.textContent = BUILD_NUMBER;
 
 document.addEventListener("keydown", event => {
@@ -870,5 +1013,7 @@ document.addEventListener("keydown", event => {
 
 applyVisualSettings();
 loadData();
+loadStandings();
 
 setInterval(loadData, 60000);
+setInterval(loadStandings, 600000);
