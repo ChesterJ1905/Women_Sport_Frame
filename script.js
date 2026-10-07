@@ -1,4 +1,4 @@
-const BUILD_NUMBER = "2.00";
+const BUILD_NUMBER = "2.01";
 
 const LEAGUES = [
   ["wnba", "WNBA"],
